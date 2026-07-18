@@ -1,0 +1,9 @@
+[Unit]
+Description=Gives normal user access to enrolling and matching fingerprints
+
+[Service]
+ExecStart=/usr/bin/rust-fp-dbus-interface
+Type=exec
+
+[Install]
+WantedBy=multi-user.target
