@@ -16,3 +16,7 @@ rand = "0.8.5"
 rust-fp = { path = "../rust-fp" }
 zbus = "4.3.0"
 ctrlc = { version = "3.4.4", features = ["termination"] }
+pwd = "1.4"
+async-std = "1.12"
+libc = "0.2"
+rmp = "0.8"

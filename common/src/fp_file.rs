@@ -35,3 +35,11 @@ pub fn get_fp_dir() -> Result<String, Error> {
 pub fn get_fp_file() -> Result<String, Error> {
     Ok(format!("{}/cros-fp-templates", get_fp_dir()?))
 }
+
+pub fn get_fp_dir_in(home_dir: &str) -> String {
+    format!("{home_dir}/.var")
+}
+
+pub fn get_fp_file_in(home_dir: &str) -> String {
+    format!("{}/cros-fp-templates", get_fp_dir_in(home_dir))
+}

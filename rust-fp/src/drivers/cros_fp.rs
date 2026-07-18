@@ -138,7 +138,7 @@ impl OpenedCrosFp {
 }
 
 impl OpenedFingerprintDriver for OpenedCrosFp {
-    fn start_or_continue_enroll(&mut self) -> BoxFuture<EnrollStepResult> {
+    fn start_or_continue_enroll(&mut self) -> BoxFuture<'_, EnrollStepResult> {
         Box::pin(async {
             self.ensure_seed_is_set().await;
             self.check_if_templates_got_cleared();
@@ -214,7 +214,7 @@ impl OpenedFingerprintDriver for OpenedCrosFp {
     fn match_templates<'a>(
         &'a mut self,
         templates: &'a [Vec<u8>],
-    ) -> BoxFuture<Result<MatchOutput, Box<dyn Error>>> {
+    ) -> BoxFuture<'a, Result<MatchOutput, Box<dyn Error>>> {
         Box::pin(async move {
             let hashes = templates
                 .iter()
