@@ -279,10 +279,11 @@ fn do_fingerprint_match(
 }
 
 impl PamHooks for RustFpPam {
-    fn sm_authenticate(pamh: &mut PamHandle, _args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
+    fn sm_authenticate(pamh: &mut PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
         init_panic_hook();
+        let grosshack = args.iter().any(|a| a.to_bytes() == b"grosshack");
         syslog_info(&format!(
-            "sm_authenticate called, PID={}",
+            "sm_authenticate called, PID={}, grosshack={grosshack}",
             std::process::id()
         ));
 
@@ -348,57 +349,75 @@ impl PamHooks for RustFpPam {
                 .ok();
         }
 
-        // Prompt for password
-        let conv = match pamh.get_item::<Conv>() {
-            Ok(Some(conv)) => conv,
-            _ => {
-                syslog_info("no PAM conv available");
-                // Try fingerprint directly
-                if !templates.is_empty() {
-                    if let Ok(PAM_SUCCESS) = fp_rx.recv_timeout(Duration::from_secs(30)) {
-                        return PAM_SUCCESS;
+        if grosshack {
+            let conv = match pamh.get_item::<Conv>() {
+                Ok(Some(conv)) => conv,
+                _ => {
+                    syslog_info("no PAM conv available");
+                    if !templates.is_empty() {
+                        if let Ok(PAM_SUCCESS) = fp_rx.recv_timeout(Duration::from_secs(30)) {
+                            return PAM_SUCCESS;
+                        }
                     }
-                }
-                return PAM_AUTH_ERR;
-            }
-        };
-
-        match conv.send(PAM_PROMPT_ECHO_OFF, "Password: ") {
-            Ok(Some(resp)) => {
-                let password = resp.to_bytes();
-                if !password.is_empty() {
-                    // Store password for pam_unix try_first_pass
-                    let cstr = resp.to_owned();
-                    let _ = pamh.set_item_str::<AuthTok>(AuthTok(&cstr));
-                    syslog_info("password entered, delegating to pam_unix");
                     return PAM_AUTH_ERR;
                 }
-            }
-            Ok(None) => {}
-            Err(e) => {
-                syslog_info(&format!("conv prompt failed: {e:?}"));
-            }
-        }
+            };
 
-        // Empty password (or conv error): wait for fingerprint
-        syslog_info("empty password, trying fingerprint");
-        if !templates.is_empty() {
-            match fp_rx.recv_timeout(Duration::from_secs(30)) {
-                Ok(PAM_SUCCESS) => {
-                    syslog_info("fingerprint matched");
-                    return PAM_SUCCESS;
+            match conv.send(PAM_PROMPT_ECHO_OFF, "Password: ") {
+                Ok(Some(resp)) => {
+                    let password = resp.to_bytes();
+                    if !password.is_empty() {
+                        let cstr = resp.to_owned();
+                        let _ = pamh.set_item_str::<AuthTok>(AuthTok(&cstr));
+                        syslog_info("password entered, delegating to pam_unix");
+                        return PAM_AUTH_ERR;
+                    }
                 }
-                Ok(PAM_AUTH_ERR) => {
-                    syslog_info("fingerprint no match");
-                }
-                Ok(other) => {
-                    syslog_info(&format!("fingerprint error: {other:?}"));
-                }
-                Err(_) => {
-                    syslog_info("fingerprint timeout");
+                Ok(None) => {}
+                Err(e) => {
+                    syslog_info(&format!("conv prompt failed: {e:?}"));
                 }
             }
+
+            syslog_info("empty password, trying fingerprint");
+            if !templates.is_empty() {
+                match fp_rx.recv_timeout(Duration::from_secs(30)) {
+                    Ok(PAM_SUCCESS) => {
+                        syslog_info("fingerprint matched");
+                        return PAM_SUCCESS;
+                    }
+                    Ok(PAM_AUTH_ERR) => {
+                        syslog_info("fingerprint no match");
+                    }
+                    Ok(other) => {
+                        syslog_info(&format!("fingerprint error: {other:?}"));
+                    }
+                    Err(_) => {
+                        syslog_info("fingerprint timeout");
+                    }
+                }
+            }
+            PAM_AUTH_ERR
+        } else {
+            syslog_info("pure fingerprint mode");
+            if !templates.is_empty() {
+                match fp_rx.recv_timeout(Duration::from_secs(30)) {
+                    Ok(PAM_SUCCESS) => {
+                        syslog_info("fingerprint matched");
+                        return PAM_SUCCESS;
+                    }
+                    Ok(PAM_AUTH_ERR) => {
+                        syslog_info("fingerprint no match");
+                    }
+                    Ok(other) => {
+                        syslog_info(&format!("fingerprint error: {other:?}"));
+                    }
+                    Err(_) => {
+                        syslog_info("fingerprint timeout");
+                    }
+                }
+            }
+            PAM_AUTH_ERR
         }
-        PAM_AUTH_ERR
     }
 }

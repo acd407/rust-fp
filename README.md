@@ -24,7 +24,7 @@ Currently, `rust-fp` supports Chromebook fingerprint readers. Other people can a
 ### Integration with desktop environments
 Desktop Environment | Status      | Comments
 --------------------|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-KDE Plasma          | Working     | Works by replacing libfprint PAM module with rust-fp PAM module
+KDE Plasma          | Working     | Works by configuring the rust-fp PAM module
 GNOME               | Not working | Just replacing libfprint PAM module with rust-fp PAM module doesn't work. See https://github.com/ChocolateLoverRaj/rust-fp/issues/3
 COSMIC              | Planned     | Since COSMIC is written in Rust 🦀, it shouldn't be too hard to add nice support for rust-fp unlock. Maybe even skip PAM entirely and directly add rust-fp integration to COSMIC. Once COSMIC is officially released and I switch to COSMIC, I'll work on this.
 
@@ -74,38 +74,36 @@ sudo cp dbus-interface/org.rust_fp.RustFp.conf /usr/share/dbus-1/system.d
 
 #### Install `rust-fp-dbus-interface`
 ```sh
-sudo cp target/release/rust-fp-dbus-interface /usr/local/bin
+sudo cp target/release/rust-fp-dbus-interface /usr/bin
 ```
 
 #### Create the systemd service
-Create a file `/etc/systemd/system/rust-fp-dbus-interface.service`:
-```
-[Unit]
-Description=Gives normal user access to enrolling and matching fingerprints
-
-[Service]
-ExecStart=/usr/local/bin/rust-fp-dbus-interface
-Type=exec
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo cp rust-fp-dbus-interface.service /etc/systemd/system
 ```
 You can start it with
 ```bash
 sudo systemctl enable --now rust-fp-dbus-interface
 ```
 
-#### Configure KDE fingerprint PAM
+#### Configure PAM
 Copy the PAM module to the location where PAM modules belong
 ```bash
 sudo cp target/release/librust_fp_pam_module.so /lib64/security
 ```
 Depending on the distro, the folder might be `/lib` or `/lib64`. On Fedora it's `/lib64`.
 
-Create / modify the file `/etc/pam.d/kde-fingerprint`:
+Create / modify the PAM config file (e.g. `/etc/pam.d/sudo`) with one of the following configurations:
+
+**Pure fingerprint mode** — no password prompt:
 ```
 auth    sufficient    librust_fp_pam_module.so
-account sufficient    librust_fp_pam_module.so
+```
+
+**Grosshack mode** — password prompt with fingerprint fallback (empty password triggers fingerprint):
+```
+auth    sufficient    librust_fp_pam_module.so grosshack
+auth    sufficient    pam_unix.so try_first_pass nullok
 ```
 
 #### Install the CLI
@@ -114,7 +112,11 @@ sudo cp target/release/rust-fp /usr/local/bin
 ```
 
 ## Usage
-All you really need to do is enroll some fingerprints with the `rust-fp` CLI. Depending on your Chromebook, you will a maximum number of templates that can be loaded onto the fingerprint sensor at a time. It's probably 5. Just typing `rust-fp` will show the help page. Run `rust-fp add <name>` to enroll your fingerprints. Then lock the screen and you should be able to unlock with either your password or an enrolled fingerprint.
+Enroll fingerprints with the `rust-fp` CLI. Depending on your Chromebook, there is a maximum number of templates that can be loaded onto the fingerprint sensor at a time — probably 5. Run `rust-fp add <name>` to enroll a fingerprint.
+
+Lock the screen and you should be able to unlock:
+- **Pure fingerprint mode**: fingerprint only
+- **Grosshack mode**: enter password, or press Enter with an empty password to use fingerprint
 
 ## Troubleshooting
 - See [the list of known issues](https://github.com/ChocolateLoverRaj/rust-fp/labels/bug).
