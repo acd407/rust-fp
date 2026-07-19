@@ -1,8 +1,7 @@
 use std::fmt::{Display, Formatter};
+use std::fs;
 use std::io;
 
-use async_std::fs::{create_dir_all, OpenOptions};
-use async_std::io::WriteExt;
 use rmp_serde::encode;
 
 use crate::fp_file;
@@ -15,7 +14,6 @@ pub enum Error {
     FpDir(fp_file::Error),
     CreateDir(io::Error),
     FpFile(fp_file::Error),
-    Open(io::Error),
     Write(io::Error),
 }
 
@@ -36,38 +34,29 @@ impl Display for Error {
             Self::FpFile(e) => {
                 write!(f, "Error getting fp file: {:#?}", e)
             }
-            Self::Open(e) => {
-                write!(f, "Error opening file: {:#?}", e)
-            }
             Self::Write(e) => {
-                write!(f, "Error reading file: {:#?}", e)
+                write!(f, "Error writing file: {:#?}", e)
             }
         }
     }
 }
 
-pub async fn set_templates(templates: &Templates) -> Result<(), Error> {
+pub fn set_templates(templates: &Templates) -> Result<(), Error> {
     let vec = encode::to_vec(templates).map_err(Error::Encode)?;
     let fp_file = get_fp_file().map_err(Error::FpFile)?;
     let fp_dir = get_fp_dir().map_err(Error::FpDir)?;
-    set_templates_in(&fp_file, &fp_dir, &vec).await
+    set_templates_in(&fp_file, &fp_dir, &vec)
 }
 
-pub async fn set_templates_for(home_dir: &str, templates: &Templates) -> Result<(), Error> {
+pub fn set_templates_for(home_dir: &str, templates: &Templates) -> Result<(), Error> {
     let vec = encode::to_vec(templates).map_err(Error::Encode)?;
     let fp_file = get_fp_file_in(home_dir);
     let fp_dir = get_fp_dir_in(home_dir);
-    set_templates_in(&fp_file, &fp_dir, &vec).await
+    set_templates_in(&fp_file, &fp_dir, &vec)
 }
 
-pub async fn set_templates_in(fp_file: &str, fp_dir: &str, encoded: &[u8]) -> Result<(), Error> {
-    create_dir_all(fp_dir).await.map_err(Error::CreateDir)?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(fp_file)
-        .await
-        .map_err(Error::Open)?;
-    file.write(encoded).await.map_err(Error::Write)?;
+pub fn set_templates_in(fp_file: &str, fp_dir: &str, encoded: &[u8]) -> Result<(), Error> {
+    fs::create_dir_all(fp_dir).map_err(Error::CreateDir)?;
+    fs::write(fp_file, encoded).map_err(Error::Write)?;
     Ok(())
 }

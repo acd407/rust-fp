@@ -12,7 +12,9 @@ use pwd::Passwd;
 use zbus::blocking::Connection;
 
 use rust_fp::fingerprint_driver::{MatchOutput, MatchedOutput};
+use rust_fp_common::get_templates::get_templates_for;
 use rust_fp_common::rust_fp_dbus::RustFpProxyBlocking;
+use rust_fp_common::set_templates::set_templates_for;
 
 fn syslog_info(msg: &str) {
     let c_msg = std::ffi::CString::new(msg).unwrap();
@@ -52,177 +54,9 @@ fn init_panic_hook() {
     }));
 }
 
-fn read_templates(home_dir: &str) -> std::collections::HashMap<String, Vec<u8>> {
-    use std::collections::HashMap;
-
-    let fp_path = rust_fp_common::fp_file::get_fp_file_in(home_dir);
-    let buf = match std::fs::read(&fp_path) {
-        Ok(buf) => buf,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return HashMap::new();
-        }
-        Err(e) => {
-            syslog_info(&format!("read templates failed: {e:?}"));
-            return HashMap::new();
-        }
-    };
-
-    let mut result: HashMap<String, Vec<u8>> = HashMap::new();
-    let mut pos = 0;
-    if pos >= buf.len() {
-        return result;
-    }
-    let marker = buf[pos];
-    pos += 1;
-    let n = match marker {
-        0x80..=0x8f => (marker & 0x0f) as u32,
-        _ => return result,
-    };
-    for _i in 0..n {
-        if pos >= buf.len() {
-            break;
-        }
-        let key_marker = buf[pos];
-        pos += 1;
-        let key_len = match key_marker {
-            0xa0..=0xbf => (key_marker & 0x1f) as usize,
-            _ => return result,
-        };
-        if pos + key_len > buf.len() {
-            break;
-        }
-        let key = match std::str::from_utf8(&buf[pos..pos + key_len]) {
-            Ok(s) => s.to_string(),
-            Err(_) => return result,
-        };
-        pos += key_len;
-        if pos >= buf.len() {
-            break;
-        }
-        let val_marker = buf[pos];
-        pos += 1;
-        let value: Vec<u8> = match val_marker {
-            0xc4 => {
-                if pos >= buf.len() {
-                    break;
-                }
-                let len = buf[pos] as usize;
-                pos += 1;
-                if pos + len > buf.len() {
-                    break;
-                }
-                let v = buf[pos..pos + len].to_vec();
-                pos += len;
-                v
-            }
-            0xc5 => {
-                if pos + 2 > buf.len() {
-                    break;
-                }
-                let len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
-                pos += 2;
-                if pos + len > buf.len() {
-                    break;
-                }
-                let v = buf[pos..pos + len].to_vec();
-                pos += len;
-                v
-            }
-            0xc6 => {
-                if pos + 4 > buf.len() {
-                    break;
-                }
-                let len = u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
-                    as usize;
-                pos += 4;
-                if pos + len > buf.len() {
-                    break;
-                }
-                let v = buf[pos..pos + len].to_vec();
-                pos += len;
-                v
-            }
-            0xdc => {
-                if pos + 2 > buf.len() {
-                    break;
-                }
-                let count = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
-                pos += 2;
-                let mut vals = Vec::with_capacity(count);
-                for _ in 0..count {
-                    if pos >= buf.len() {
-                        break;
-                    }
-                    let b = buf[pos];
-                    pos += 1;
-                    match b {
-                        0x00..=0x7f => vals.push(b),
-                        0xcc => {
-                            if pos >= buf.len() {
-                                break;
-                            }
-                            vals.push(buf[pos]);
-                            pos += 1;
-                        }
-                        0xd0 => {
-                            if pos >= buf.len() {
-                                break;
-                            }
-                            vals.push(buf[pos]);
-                            pos += 1;
-                        }
-                        _ => return result,
-                    }
-                }
-                vals
-            }
-            0xdd => {
-                if pos + 4 > buf.len() {
-                    break;
-                }
-                let count = u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
-                    as usize;
-                pos += 4;
-                let mut vals = Vec::with_capacity(count);
-                for _ in 0..count {
-                    if pos >= buf.len() {
-                        break;
-                    }
-                    let b = buf[pos];
-                    pos += 1;
-                    match b {
-                        0x00..=0x7f => vals.push(b),
-                        0xcc => {
-                            if pos >= buf.len() {
-                                break;
-                            }
-                            vals.push(buf[pos]);
-                            pos += 1;
-                        }
-                        0xd0 => {
-                            if pos >= buf.len() {
-                                break;
-                            }
-                            vals.push(buf[pos]);
-                            pos += 1;
-                        }
-                        _ => return result,
-                    }
-                }
-                vals
-            }
-            0x90..=0x9f => Vec::new(),
-            _ => return result,
-        };
-        result.insert(key, value);
-    }
-    result
-}
-
 fn do_fingerprint_match(
     px: &RustFpProxyBlocking<'_>,
     templates: &mut std::collections::HashMap<String, Vec<u8>>,
-    fp_path: &str,
     home_dir: &str,
 ) -> PamResultCode {
     let templates_vec = templates.iter().collect::<Vec<_>>();
@@ -251,19 +85,7 @@ fn do_fingerprint_match(
                 let matched_label = templates_vec[index].0;
                 if let Some(template) = updated_template {
                     templates.insert(matched_label.to_owned(), template);
-                    let fp_dir = rust_fp_common::fp_file::get_fp_dir_in(home_dir);
-                    let _ = std::fs::create_dir_all(&fp_dir);
-                    let mut out = Vec::new();
-                    out.push(0x80u8 | templates.len() as u8);
-                    for (k, v) in templates {
-                        let kb = k.as_bytes();
-                        out.push(0xa0u8 | kb.len() as u8);
-                        out.extend_from_slice(kb);
-                        out.push(0xc5u8);
-                        out.extend_from_slice(&(v.len() as u16).to_be_bytes());
-                        out.extend_from_slice(v);
-                    }
-                    let _ = std::fs::write(fp_path, &out);
+                    let _ = set_templates_for(home_dir, templates);
                 }
                 return PAM_SUCCESS;
             }
@@ -308,14 +130,12 @@ impl PamHooks for RustFpPam {
         };
         syslog_info(&format!("home_dir={home_dir}"));
 
-        let fp_path = rust_fp_common::fp_file::get_fp_file_in(&home_dir);
-        let templates = read_templates(&home_dir);
+        let templates = get_templates_for(&home_dir).unwrap_or_default();
 
         // Start fingerprint in background if templates exist
         let (fp_tx, fp_rx) = channel();
         if !templates.is_empty() {
             let home_dir_fp = home_dir.clone();
-            let fp_path_fp = fp_path.clone();
             let mut templates_fp = templates.clone();
             std::thread::Builder::new()
                 .name("fp-match".into())
@@ -342,8 +162,7 @@ impl PamHooks for RustFpPam {
                             return;
                         }
                     };
-                    let result =
-                        do_fingerprint_match(&proxy, &mut templates_fp, &fp_path_fp, &home_dir_fp);
+                    let result = do_fingerprint_match(&proxy, &mut templates_fp, &home_dir_fp);
                     let _ = fp_tx.send(result);
                 })
                 .ok();

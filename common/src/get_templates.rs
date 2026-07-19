@@ -3,8 +3,6 @@ use std::io;
 use std::io::ErrorKind;
 
 use crate::fp_file;
-use async_std::fs::OpenOptions;
-use async_std::io::ReadExt;
 use rmp_serde::decode;
 
 use crate::fp_file::{get_fp_file, get_fp_file_in};
@@ -39,19 +37,17 @@ impl Display for Error {
     }
 }
 
-pub async fn get_templates() -> Result<Templates, Error> {
-    get_templates_in(&get_fp_file().map_err(Error::FpFile)?).await
+pub fn get_templates() -> Result<Templates, Error> {
+    get_templates_in(&get_fp_file().map_err(Error::FpFile)?)
 }
 
-pub async fn get_templates_for(home_dir: &str) -> Result<Templates, Error> {
-    get_templates_in(&get_fp_file_in(home_dir)).await
+pub fn get_templates_for(home_dir: &str) -> Result<Templates, Error> {
+    get_templates_in(&get_fp_file_in(home_dir))
 }
 
-pub async fn get_templates_in(fp_file: &str) -> Result<Templates, Error> {
-    match OpenOptions::new().read(true).open(fp_file).await {
-        Ok(mut file) => {
-            let mut buf = Default::default();
-            file.read_to_end(&mut buf).await.map_err(Error::Read)?;
+pub fn get_templates_in(fp_file: &str) -> Result<Templates, Error> {
+    match std::fs::read(fp_file) {
+        Ok(buf) => {
             let templates = rmp_serde::from_slice::<Templates>(&buf).map_err(Error::Decode)?;
             Ok(templates)
         }
